@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markdown テーブル クイック ジェネレータ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-4">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-2xl font-bold text-center mb-1 text-white mt-4">📋 Markdown テーブルジェネレータ</h1>
+    <p class="text-center text-gray-500 text-sm mb-6">GUIでセルを編集してMarkdownをすぐコピー</p>
+
+    <!-- Controls -->
+    <div class="bg-gray-800 rounded-2xl p-5 mb-5 border border-gray-700">
+      <div class="flex flex-wrap items-end gap-6">
+        <div>
+          <label for="rows-input" class="block text-sm text-gray-400 font-medium mb-2">行数（ヘッダー除く）</label>
+          <div class="flex items-center gap-2">
+            <button onclick="adjustRows(-1)" class="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-lg leading-none transition-colors" aria-label="行数を減らす">−</button>
+            <input type="number" id="rows-input" min="1" max="10" value="3"
+              oninput="clampAndRender('rows')"
+              class="w-16 text-center bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500"
+              aria-label="行数 1から10">
+            <button onclick="adjustRows(1)" class="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-lg leading-none transition-colors" aria-label="行数を増やす">+</button>
+          </div>
+        </div>
+        <div>
+          <label for="cols-input" class="block text-sm text-gray-400 font-medium mb-2">列数</label>
+          <div class="flex items-center gap-2">
+            <button onclick="adjustCols(-1)" class="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-lg leading-none transition-colors" aria-label="列数を減らす">−</button>
+            <input type="number" id="cols-input" min="1" max="8" value="3"
+              oninput="clampAndRender('cols')"
+              class="w-16 text-center bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-white font-mono focus:outline-none focus:border-blue-500"
+              aria-label="列数 1から8">
+            <button onclick="adjustCols(1)" class="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-lg leading-none transition-colors" aria-label="列数を増やす">+</button>
+          </div>
+        </div>
+        <div class="flex-1 flex justify-end gap-2">
+          <button onclick="clearAll()" class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 rounded-xl transition-colors" aria-label="テーブルの内容をクリア">クリア</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table Editor -->
+    <div class="bg-gray-800 rounded-2xl p-5 mb-5 border border-gray-700 overflow-x-auto">
+      <h2 class="text-sm font-semibold text-gray-400 mb-3">テーブル編集</h2>
+      <div id="table-editor"></div>
+    </div>
+
+    <!-- Alignment Controls -->
+    <div class="bg-gray-800 rounded-2xl p-5 mb-5 border border-gray-700">
+      <h2 class="text-sm font-semibold text-gray-400 mb-3">列のアライン設定</h2>
+      <div id="align-controls" class="flex flex-wrap gap-3"></div>
+    </div>
+
+    <!-- Markdown Preview -->
+    <div class="bg-gray-800 rounded-2xl p-5 border border-gray-700">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-400">生成されたMarkdown</h2>
+        <button onclick="copyMarkdown()" id="copy-btn"
+          class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-xl text-sm font-semibold transition-all"
+          aria-label="Markdownをクリップボードにコピー">
+          <span id="copy-icon">📋</span>
+          <span id="copy-text">コピー</span>
+        </button>
+      </div>
+      <pre id="markdown-output" class="bg-gray-900 rounded-xl p-4 text-sm font-mono text-green-300 overflow-x-auto whitespace-pre"></pre>
+    </div>
+  </div>
+
+  <script>
+    function escapeHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    // State
+    let rows = 3;
+    let cols = 3;
+    let cellData = {};   // key: "r_c", value: string
+    let alignData = {};  // key: col index, value: 'left'|'center'|'right'
+
+    function getCell(r, c) { return cellData[r + '_' + c] || ''; }
+    function setCell(r, c, v) { cellData[r + '_' + c] = v; }
+    function getAlign(c) { return alignData[c] || 'left'; }
+
+    function clampRows(v) { return Math.max(1, Math.min(10, parseInt(v) || 1)); }
+    function clampCols(v) { return Math.max(1, Math.min(8, parseInt(v) || 1)); }
+
+    function clampAndRender(which) {
+      if (which === 'rows') {
+        const v = clampRows(document.getElementById('rows-input').value);
+        rows = v;
+      } else {
+        const v = clampCols(document.getElementById('cols-input').value);
+        cols = v;
+      }
+      renderAll();
+    }
+
+    function adjustRows(delta) {
+      rows = clampRows(rows + delta);
+      document.getElementById('rows-input').value = rows;
+      renderAll();
+    }
+
+    function adjustCols(delta) {
+      cols = clampCols(cols + delta);
+      document.getElementById('cols-input').value = cols;
+      renderAll();
+    }
+
+    function clearAll() {
+      cellData = {};
+      renderAll();
+    }
+
+    function renderTableEditor() {
+      const container = document.getElementById('table-editor');
+      let html = '<table class="border-collapse w-full">';
+
+      // Header row
+      html += '<thead><tr>';
+      for (let c = 0; c < cols; c++) {
+        const val = escapeHtml(getCell(0, c));
+        html += '<th class="p-1">';
+        html += '<input type="text" value="' + val + '" ';
+        html += 'placeholder="ヘッダー ' + escapeHtml(String(c + 1)) + '" ';
+        html += 'oninput="setCell(0,' + c + ',this.value);updateMarkdown()" ';
+        html += 'class="w-full bg-blue-900 bg-opacity-50 border border-blue-700 rounded-lg px-2 py-1.5 text-sm text-white placeholder-blue-800 focus:outline-none focus:border-blue-400 font-semibold" ';
+        html += 'aria-label="ヘッダー行 列' + escapeHtml(String(c + 1)) + '">';
+        html += '</th>';
+      }
+      html += '</tr></thead>';
+
+      // Data rows
+      html += '<tbody>';
+      for (let r = 1; r <= rows; r++) {
+        const bg = r % 2 === 0 ? 'bg-gray-750' : '';
+        html += '<tr class="' + bg + '">';
+        for (let c = 0; c < cols; c++) {
+          const val = escapeHtml(getCell(r, c));
+          html += '<td class="p-1">';
+          html += '<input type="text" value="' + val + '" ';
+          html += 'placeholder="セル ' + escapeHtml(String(r)) + '-' + escapeHtml(String(c + 1)) + '" ';
+          html += 'oninput="setCell(' + r + ',' + c + ',this.value);updateMarkdown()" ';
+          html += 'class="w-full bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-400" ';
+          html += 'aria-label="行' + escapeHtml(String(r)) + ' 列' + escapeHtml(String(c + 1)) + '">';
+          html += '</td>';
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+
+      container.innerHTML = html;
+    }
+
+    function renderAlignControls() {
+      const container = document.getElementById('align-controls');
+      let html = '';
+      const alignLabels = { left: '← 左', center: '= 中央', right: '→ 右' };
+
+      for (let c = 0; c < cols; c++) {
+        const current = getAlign(c);
+        html += '<div class="flex items-center gap-1">';
+        html += '<span class="text-xs text-gray-500 mr-1">列' + escapeHtml(String(c + 1)) + '</span>';
+        ['left', 'center', 'right'].forEach(a => {
+          const active = current === a;
+          const cls = active
+            ? 'bg-blue-600 text-white border-blue-500'
+            : 'bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600';
+          html += '<button onclick="setAlign(' + c + ',\'' + a + '\')" ';
+          html += 'class="px-2 py-1 text-xs border rounded-lg transition-colors ' + cls + '" ';
+          html += 'aria-label="列' + escapeHtml(String(c + 1)) + 'を' + escapeHtml(alignLabels[a]) + 'に設定" ';
+          html += 'aria-pressed="' + (active ? 'true' : 'false') + '">';
+          html += escapeHtml(alignLabels[a]);
+          html += '</button>';
+        });
+        html += '</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    function setAlign(c, align) {
+      alignData[c] = align;
+      renderAlignControls();
+      updateMarkdown();
+    }
+
+    function generateMarkdown() {
+      // Calculate column widths
+      const widths = [];
+      for (let c = 0; c < cols; c++) {
+        let max = Math.max(3, (getCell(0, c) || ('列' + (c+1))).length);
+        for (let r = 1; r <= rows; r++) {
+          max = Math.max(max, (getCell(r, c) || '').length);
+        }
+        widths[c] = max;
+      }
+
+      function pad(str, width) {
+        const s = str || '';
+        return s + ' '.repeat(Math.max(0, width - s.length));
+      }
+
+      // Header
+      let lines = [];
+      let headerCells = [];
+      for (let c = 0; c < cols; c++) {
+        headerCells.push(' ' + pad(getCell(0, c) || ('列' + (c+1)), widths[c]) + ' ');
+      }
+      lines.push('|' + headerCells.join('|') + '|');
+
+      // Separator
+      let sepCells = [];
+      for (let c = 0; c < cols; c++) {
+        const align = getAlign(c);
+        const w = widths[c];
+        if (align === 'center') sepCells.push(':' + '-'.repeat(w) + ':');
+        else if (align === 'right') sepCells.push(' ' + '-'.repeat(w) + ':');
+        else sepCells.push(' ' + '-'.repeat(w) + '-');
+      }
+      lines.push('|' + sepCells.join('|') + '|');
+
+      // Data rows
+      for (let r = 1; r <= rows; r++) {
+        let dataCells = [];
+        for (let c = 0; c < cols; c++) {
+          dataCells.push(' ' + pad(getCell(r, c) || '', widths[c]) + ' ');
+        }
+        lines.push('|' + dataCells.join('|') + '|');
+      }
+
+      return lines.join('\n');
+    }
+
+    function updateMarkdown() {
+      const md = generateMarkdown();
+      document.getElementById('markdown-output').textContent = md;
+    }
+
+    function renderAll() {
+      renderTableEditor();
+      renderAlignControls();
+      updateMarkdown();
+    }
+
+    function copyMarkdown() {
+      const md = generateMarkdown();
+      navigator.clipboard.writeText(md).then(() => {
+        const btn = document.getElementById('copy-btn');
+        const icon = document.getElementById('copy-icon');
+        const text = document.getElementById('copy-text');
+        icon.textContent = '✅';
+        text.textContent = 'コピー済み';
+        btn.classList.replace('bg-blue-600', 'bg-green-600');
+        btn.classList.replace('hover:bg-blue-500', 'hover:bg-green-500');
+        setTimeout(() => {
+          icon.textContent = '📋';
+          text.textContent = 'コピー';
+          btn.classList.replace('bg-green-600', 'bg-blue-600');
+          btn.classList.replace('hover:bg-green-500', 'hover:bg-blue-500');
+        }, 2000);
+      }).catch(() => {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = md;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      });
+    }
+
+    // Initialize
+    renderAll();
+  </script>
+</body>
+</html>
